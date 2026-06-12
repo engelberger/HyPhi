@@ -172,10 +172,33 @@ def setup_delayed_kuramoto(
         solver.integrate_blindly(max_delay, 0.1)
 
     """
-    raise NotImplementedError(
-        "TODO: Insert original delayed Kuramoto DDE simulation logic. "
-        "See connectome_kuramoto.ipynb for reference implementation."
-    )
+    from jitcdde import jitcdde, t, y  # noqa: PLC0415  # ty: ignore[unresolved-import]
+    from symengine import sin  # noqa: PLC0415  # ty: ignore[unresolved-import]
+
+    n_osc = int(W.shape[0])
+    delays = tract / velocity  # conduction delay (seconds) for each connection
+
+    def rhs():
+        for i in range(n_osc):
+            coupling = sum(
+                c_intra * float(W[j, i]) * sin(y(j, t - float(delays[i, j])) - y(i))
+                for j in range(n_osc)
+                if W[j, i] != 0 and delays[i, j] > 0
+            )
+            yield omega[i] + coupling
+
+    solver = jitcdde(rhs, n=n_osc, verbose=False)
+    rng = np.random.default_rng(seed)
+    initial_phases = rng.uniform(0.0, 2.0 * np.pi, n_osc)
+    solver.constant_past(initial_phases, time=0.0)
+    solver.set_integration_parameters(rtol=0, atol=1e-5)
+    max_delay = float(delays.max()) if delays.size else 0.0
+    solver.integrate_blindly(max(max_delay, 0.01), 0.01)
+    # The observation-noise configuration travels with the solver so run_delayed_kuramoto can
+    # apply it without changing its signature.
+    solver.hyphi_noise_strength = float(noise_strength)  # ty: ignore[unresolved-attribute]
+    solver.hyphi_rng = rng  # ty: ignore[unresolved-attribute]
+    return solver
 
 
 def run_delayed_kuramoto(
@@ -217,10 +240,24 @@ def run_delayed_kuramoto(
     Return trimmed results after ``t_skip``.
 
     """
-    raise NotImplementedError(
-        "TODO: Insert original delayed Kuramoto integration loop. "
-        "See connectome_kuramoto.ipynb for reference implementation."
-    )
+    start = float(getattr(solver, "t", 0.0))
+    # Sample strictly ahead of the solver's current time so every integration step advances.
+    n_steps = max(1, round(t_max / dt))
+    times = start + np.arange(1, n_steps + 1) * dt
+    noise_strength = float(getattr(solver, "hyphi_noise_strength", 0.0))
+    rng = getattr(solver, "hyphi_rng", None) or np.random.default_rng(0)
+
+    theta_history = np.empty((len(times), n_osc), dtype=float)
+    order_parameters = np.empty(len(times), dtype=float)
+    for k, time in enumerate(times):
+        phases = np.asarray(solver.integrate(time), dtype=float) % (2.0 * np.pi)  # ty: ignore[unresolved-attribute]
+        if noise_strength:
+            phases = (phases + noise_strength * rng.standard_normal(n_osc)) % (2.0 * np.pi)
+        theta_history[k] = phases
+        order_parameters[k] = float(np.abs(np.mean(np.exp(1j * phases))))
+
+    keep = times >= (start + t_skip)
+    return times[keep], theta_history[keep], order_parameters[keep]
 
 
 # ====================================================
