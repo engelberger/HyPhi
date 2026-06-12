@@ -33,7 +33,10 @@ from typing import Any
 
 import networkx as nx
 import numpy as np
+import pandas as pd
 
+from hyphi.modeling.entropies import get_estimator
+from hyphi.modeling.graph_curvatures import compute_afrc_vec, compute_frc_vec, compute_orc_vec
 from hyphi.modeling.windowing import compute_plv_pair
 
 # %% Set global vars & paths >><< o >><< o >><< o >><< o >><< o >><< o >><< o >><< o >><< o >><< o >><< o >><< o >><< o
@@ -49,6 +52,7 @@ __all__ = [
     "compute_plv",
     "compute_wpli",
     "connectivity_matrix_features",
+    "curvature_entropy_matrix",
     "extract_window_features",
 ]
 
@@ -453,6 +457,101 @@ def classify_curvature_vs_benchmarks(
             }
         )
     return out
+
+
+# ====================================================
+# Curvature x Entropy comparison matrix
+# ====================================================
+
+# (curvature name) -> (vectorised curvature function, the edge attribute it writes).
+# FRC and AFRC both write "formanCurvature" (AFRC is FRC with the augmented method); ORC writes
+# "ricciCurvature". The functions are imported lazily so importing benchmarks stays light.
+_CURVATURE_ATTR = {
+    "frc": "formanCurvature",
+    "afrc": "formanCurvature",
+    "orc": "ricciCurvature",
+}
+
+
+def _curvature_vec(name: str):
+    """Return the vectorised curvature function for a curvature name."""
+    if name == "frc":
+        return lambda graphs: compute_frc_vec(graphs, method="1d")
+    if name == "afrc":
+        return compute_afrc_vec
+    if name == "orc":
+        return compute_orc_vec
+    valid = ", ".join(sorted(_CURVATURE_ATTR))
+    msg = f"Unknown curvature {name!r}; choose from: {valid}"
+    raise ValueError(msg)
+
+
+def curvature_entropy_matrix(
+    graph_series: list[nx.Graph],
+    x_values: np.ndarray | None = None,
+    curvatures: tuple[str, ...] = ("frc", "afrc"),
+    estimators: tuple[str, ...] = ("vasicek", "kde_plugin", "kozachenko"),
+) -> pd.DataFrame:
+    """
+    Score every (curvature notion, entropy estimator) pair on a graph series.
+
+    For each combination, this annotates the graphs with the curvature, computes the entropy of
+    the curvature distribution per graph (the entropy-over-sweep trace), and records fit metrics:
+    how much the trace responds across the series (``std_entropy`` and ``entropy_range``, a
+    sensitivity proxy when the series sweeps a known structural transition) and where the largest
+    change occurs (``transition_x``, the detected transition point). The series can come from any
+    source, so the modality axis of the matrix is realized by passing a graph series built from a
+    given modality or from the simulation ground truth (for example a Watts-Strogatz sweep).
+
+    Parameters
+    ----------
+    graph_series : list[nx.Graph]
+        Graphs ordered along the axis of interest (for example increasing rewiring probability).
+    x_values : np.ndarray, optional
+        The value of that axis at each graph (for ``transition_x``); defaults to the index.
+    curvatures : tuple of str
+        Curvature notions to score: any of ``"frc"``, ``"afrc"``, ``"orc"``.
+    estimators : tuple of str
+        Entropy estimator names, any key of ``hyphi.modeling.entropies.ESTIMATORS``.
+
+    Returns
+    -------
+    pd.DataFrame
+        One row per (curvature, entropy) pair, with the fit metrics as columns.
+
+    """
+    series = list(graph_series)
+    x = np.asarray(x_values, dtype=float) if x_values is not None else np.arange(len(series), dtype=float)
+
+    records = []
+    for cname in curvatures:
+        curved = _curvature_vec(cname)(series)
+        attr = _CURVATURE_ATTR[cname]
+        for ename in estimators:
+            estimator = get_estimator(ename)
+            trace = np.array([estimator(graph, curvature=attr) for graph in curved], dtype=float)
+            # Some estimators return inf/nan on pathological distributions (a near-regular graph
+            # gives a peaked curvature spectrum), so compute every metric on the finite subset and
+            # report the finite fraction as a robustness signal for that combination.
+            finite_mask = np.isfinite(trace)
+            finite = trace[finite_mask]
+            if finite.size > 1:
+                x_finite = x[finite_mask]
+                transition_x = float(x_finite[1:][int(np.argmax(np.abs(np.diff(finite))))])
+            else:
+                transition_x = float("nan")
+            records.append(
+                {
+                    "curvature": cname,
+                    "entropy": ename,
+                    "mean_entropy": float(finite.mean()) if finite.size else float("nan"),
+                    "std_entropy": float(finite.std()) if finite.size else float("nan"),
+                    "entropy_range": float(finite.max() - finite.min()) if finite.size else float("nan"),
+                    "transition_x": transition_x,
+                    "frac_finite": float(finite_mask.mean()),
+                }
+            )
+    return pd.DataFrame.from_records(records)
 
 
 # o >><< o >><< o >><< o >><< o >><< o >><< o >><< o >><< o >><< o >><< o >><< o >><< o >><< o >><< o >><< o >><< o END

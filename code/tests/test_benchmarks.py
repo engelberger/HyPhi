@@ -26,8 +26,10 @@ from hyphi.benchmarks import (
     compute_plv,
     compute_wpli,
     connectivity_matrix_features,
+    curvature_entropy_matrix,
     extract_window_features,
 )
+from hyphi.simulation.graph_simulations import gen_weighted_sw
 
 # %% Set global vars & paths >><< o >><< o >><< o >><< o >><< o >><< o >><< o >><< o >><< o >><< o >><< o >><< o >><< o
 
@@ -283,6 +285,49 @@ class TestClassifyCurvatureVsBenchmarks:
                 cv=2,
                 classifier="xgboost",
             )
+
+
+class TestCurvatureEntropyMatrix:
+    """curvature_entropy_matrix scores every (curvature, estimator) pair on a graph series."""
+
+    def _ws_series(self, n_points=8):
+        probabilities = np.logspace(-2, 0, n_points)
+        graphs = [gen_weighted_sw(40, 4, p, 1.0, seed_val=0) for p in probabilities]
+        return graphs, probabilities
+
+    def test_shape_and_columns(self):
+        """The matrix has one row per (curvature, estimator) pair and the fit-metric columns."""
+        graphs, probabilities = self._ws_series()
+        matrix = curvature_entropy_matrix(
+            graphs, x_values=probabilities, curvatures=("frc", "afrc"), estimators=("kde_plugin", "kozachenko")
+        )
+        assert matrix.shape[0] == 2 * 2
+        assert set(matrix.columns) >= {
+            "curvature",
+            "entropy",
+            "mean_entropy",
+            "std_entropy",
+            "entropy_range",
+            "transition_x",
+            "frac_finite",
+        }
+
+    def test_metrics_are_finite_and_robust(self):
+        """Metrics are finite (computed on the finite subset) and frac_finite is a fraction."""
+        graphs, probabilities = self._ws_series()
+        matrix = curvature_entropy_matrix(
+            graphs, x_values=probabilities, curvatures=("frc",), estimators=("kde_plugin", "kozachenko")
+        )
+        numeric = matrix[["mean_entropy", "std_entropy", "entropy_range"]].to_numpy()
+        assert np.all(np.isfinite(numeric))
+        assert np.all(matrix["frac_finite"].to_numpy() >= 0.0)
+        assert np.all(matrix["frac_finite"].to_numpy() <= 1.0)
+
+    def test_unknown_curvature_raises(self):
+        """An unknown curvature name raises a clear error."""
+        graphs, _ = self._ws_series(n_points=3)
+        with pytest.raises(ValueError, match="Unknown curvature"):
+            curvature_entropy_matrix(graphs, curvatures=("not_a_curvature",), estimators=("kde_plugin",))
 
 
 # o >><< o >><< o >><< o >><< o >><< o >><< o >><< o >><< o >><< o >><< o >><< o >><< o >><< o >><< o >><< o >><< o END
