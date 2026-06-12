@@ -51,6 +51,7 @@ dependencies = [
     "tomli>=2.0,<3.0",
     "ipykernel",
     "scipy-stubs~=1.17.1",
+    "pynndescent>=0.5,<1.0", # Approximate nearest-neighbour graph construction (modeling.curvatures)
 ]
 
 [project.optional-dependencies]
@@ -67,9 +68,35 @@ notebook = [
     "jupyterlab>=4.5.7,<5",
 ]
 
+viz = [
+    "plotly>=5.0,<7.0", # Interactive curvature/network figures (modeling.curvatures, visualization)
+    "seaborn>=0.12,<1.0", # Statistical plotting helpers in the visualization layer
+]
+
 experiments = []  # TODO: move depdencies here, that are only relevant for running scripts in `./experiments/`
 
 tutorial = []  # TODO: move depdencies here, that are only relevant for running scripts in `./tutorials/`
+
+# Accelerator backends for hyphi.backends. The PEP 508 environment markers make
+# `pip install hyphi[accel]` resolve the correct backend for the user's machine
+# automatically: MLX only on Apple Silicon, CuPy only on x86_64 Linux/Windows.
+metal = [
+    # Apple Metal GPU array backend (Apple Silicon only). float32 kernels.
+    "mlx>=0.20,<1.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
+]
+cuda = [
+    # NVIDIA CUDA 12 array backend (x86_64 Linux/Windows). float64 kernels.
+    # For a CUDA 11 toolkit install cupy-cuda11x instead (see docs/acceleration.md).
+    "cupy-cuda12x>=13.0,<14; (sys_platform == 'linux' or sys_platform == 'win32') and platform_machine == 'x86_64'",
+]
+hpc = [
+    "h5py>=3.8,<4.0", # HDF5 curvature store for large/cluster runs (hyphi.backends.hpc)
+]
+accel = [
+    # One install that auto-selects the right GPU backend for the machine.
+    "hyphi[metal]",
+    "hyphi[cuda]",
+]
 
 [project.urls]
 # homepage = "https://www.hyphi.org" # TODO: change to actual homepage and uncomment
