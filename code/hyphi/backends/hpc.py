@@ -88,10 +88,26 @@ def resolve_concurrency(n_procs: int, n_items: int, cores: int | None = None) ->
         ``outer * inner <= cores``.
 
     """
-    cores = cores or os.cpu_count() or 1
-    outer = max(1, min(n_procs, n_items, cores))
+    if cores is None or cores < 1:
+        cores = os.cpu_count() or 1
+    outer = max(1, min(max(1, n_procs), max(1, n_items), cores))
     inner = max(1, cores // outer)
     return outer, inner
+
+
+def _safe_start_method() -> str:
+    """
+    Pick a multiprocessing start method that does not fork a GPU/BLAS process.
+
+    ``fork`` is unsafe after a Metal/MLX context or a threaded BLAS pool has been
+    initialized (it can deadlock, notably on macOS). Prefer ``forkserver``, then
+    ``spawn``, then ``fork``.
+    """
+    available = mp.get_all_start_methods()
+    for method in ("forkserver", "spawn", "fork"):
+        if method in available:
+            return method
+    return available[0]
 
 
 def _series_worker(args):
@@ -145,7 +161,7 @@ def map_curvature_series(
 
     outer, _ = resolve_concurrency(n_procs, len(graphs))
     limit_blas_threads(1)
-    ctx = mp.get_context("fork" if hasattr(os, "fork") else "spawn")
+    ctx = mp.get_context(_safe_start_method())
     with ctx.Pool(outer, initializer=limit_blas_threads) as pool:
         return pool.map(_series_worker, [(g, method, backend, weight) for g in graphs])
 

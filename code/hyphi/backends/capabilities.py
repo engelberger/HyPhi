@@ -89,7 +89,7 @@ def recommend_backend(caps: Capabilities | None = None) -> str:
     """
     caps = caps or detect()
     if caps.cuda:
-        return "cuda"
+        return "cupy"
     if caps.metal:
         return "mlx"
     return "numpy"
@@ -104,7 +104,7 @@ def install_hint(caps: Capabilities | None = None) -> str:
     """
     caps = caps or detect()
     if caps.cuda:
-        return "CUDA backend active (CuPy). No action needed; select it with backend='cuda' or 'auto'."
+        return "CUDA backend active (CuPy). No action needed; select it with backend='cupy' or 'auto'."
     if caps.metal:
         return "Metal backend active (MLX). No action needed; select it with backend='mlx' or 'auto'."
     if caps.apple_silicon:

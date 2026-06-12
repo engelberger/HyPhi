@@ -80,12 +80,20 @@ class NativeExtBackend(CurvatureBackend):
             raise RuntimeError("hyphi_native is not built. See native/README.md.")
         if graph.n_edges == 0:
             return np.zeros(0, dtype=np.float64)
+        if graph.n_nodes > np.iinfo(np.int32).max:
+            raise ValueError(
+                f"NativeExtBackend: {graph.n_nodes} nodes exceeds the int32 index limit of the native kernels."
+            )
 
-        out = native.forman_1d(
-            graph.n_nodes,
-            graph.ei.astype(np.int32),
-            graph.ej.astype(np.int32),
-            graph.we.astype(np.float64),
-            self.device,
-        )
+        ei = graph.ei.astype(np.int32)
+        ej = graph.ej.astype(np.int32)
+        we = graph.we.astype(np.float64)
+        try:
+            out = native.forman_1d(graph.n_nodes, ei, ej, we, self.device)
+        except RuntimeError:
+            # The requested device was not compiled in or is absent; honor the
+            # documented fallback to the C++ CPU path rather than propagating.
+            if self.device == "cpu":
+                raise
+            out = native.forman_1d(graph.n_nodes, ei, ej, we, "cpu")
         return np.asarray(out, dtype=np.float64)

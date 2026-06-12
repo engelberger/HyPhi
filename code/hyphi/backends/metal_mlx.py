@@ -18,6 +18,15 @@ curvature is order 1e2). This is documented, measured in
 float32-appropriate tolerance in the parity tests. Use this backend when
 throughput on large graph series matters more than float64 reproducibility; use
 the ``numpy`` backend when bit-level float64 parity is required.
+
+Determinism
+-----------
+The per-node accumulation is a parallel scatter-add, and float32 addition is not
+associative, so repeated runs on the same input can differ in the last bits
+(measured around 1e-6 relative, the float32 floor). This backend is therefore not
+bit-reproducible. For results that go into a paper's supplementary materials, use
+a float64 backend (``numpy`` or ``cupy``), which is deterministic; reserve this
+backend for throughput where a float32-level difference is acceptable.
 """
 
 from __future__ import annotations
@@ -69,6 +78,8 @@ class MlxBackend(CurvatureBackend):
 
         if graph.n_edges == 0:
             return np.zeros(0, dtype=np.float64)
+        if graph.n_nodes > np.iinfo(np.int32).max:
+            raise ValueError(f"MlxBackend: {graph.n_nodes} nodes exceeds the int32 index limit.")
 
         ei = mx.array(graph.ei.astype(np.int32))
         ej = mx.array(graph.ej.astype(np.int32))

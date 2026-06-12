@@ -16,6 +16,7 @@
 // compiled in or whose accelerator is absent; the Python wrapper
 // (hyphi.backends.NativeExtBackend) catches and falls back to CPU.
 
+#include <cmath>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -62,9 +63,33 @@ nb::object py_forman_1d(int n_nodes, EdgeIdx ei, EdgeIdx ej, EdgeW we,
         throw std::invalid_argument("forman_1d: n_nodes must be non-negative");
     }
 
+    // Validate at the boundary so every device (CPU, CUDA, Metal) shares one
+    // contract. The CPU core checks these, but the GPU kernels do not, and an
+    // out-of-range index is an out-of-bounds device write, not a clean error.
+    const std::int32_t* ei_p = ei.data();
+    const std::int32_t* ej_p = ej.data();
+    const double* we_p = we.data();
+    for (std::size_t k = 0; k < e; ++k) {
+        if (ei_p[k] < 0 || ei_p[k] >= n_nodes || ej_p[k] < 0 || ej_p[k] >= n_nodes) {
+            throw std::invalid_argument(
+                "forman_1d: edge endpoint out of range [0, n_nodes) at edge index " +
+                std::to_string(k));
+        }
+        if (ei_p[k] == ej_p[k]) {
+            throw std::invalid_argument(
+                "forman_1d: self-loops are not supported (edge index " + std::to_string(k) +
+                "); drop them first to keep parity with FormanRicci on simple graphs");
+        }
+        if (!(we_p[k] > 0.0) || !std::isfinite(we_p[k])) {
+            throw std::invalid_argument(
+                "forman_1d: edge weight must be strictly positive and finite at edge index " +
+                std::to_string(k));
+        }
+    }
+
     const int n_edges = static_cast<int>(e);
     std::vector<double> curv = forman_1d_dispatch(
-        n_nodes, ei.data(), ej.data(), we.data(), n_edges, device);
+        n_nodes, ei_p, ej_p, we_p, n_edges, device);
     return nb::cast(own1d(std::move(curv)));
 }
 

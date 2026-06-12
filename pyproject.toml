@@ -87,7 +87,9 @@ metal = [
 cuda = [
     # NVIDIA CUDA 12 array backend (x86_64 Linux/Windows). float64 kernels.
     # For a CUDA 11 toolkit install cupy-cuda11x instead (see docs/acceleration.md).
-    "cupy-cuda12x>=13.0,<14; (sys_platform == 'linux' or sys_platform == 'win32') and platform_machine == 'x86_64'",
+    # 'platform_machine in "x86_64 AMD64"' is an allowlist: Linux reports x86_64,
+    # Windows reports AMD64; aarch64 (no cupy wheels) is excluded.
+    "cupy-cuda12x>=13.0,<14; (sys_platform == 'linux' or sys_platform == 'win32') and platform_machine in 'x86_64 AMD64'",
 ]
 hpc = [
     "h5py>=3.8,<4.0", # HDF5 curvature store for large/cluster runs (hyphi.backends.hpc)

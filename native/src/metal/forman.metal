@@ -77,8 +77,9 @@ kernel void k_accumulate_S(
     if (gid >= n_edges) {
         return;
     }
-    // 1 / sqrt(we[k]); rsqrt is the float32 reciprocal square root.
-    const float inv_sqrt = rsqrt(we[gid]);
+    // Exact 1 / sqrt(we[k]) to match every other backend (rsqrt is an
+    // approximate reciprocal-sqrt and would add error beyond float32 rounding).
+    const float inv_sqrt = 1.0f / sqrt(we[gid]);
     const int u = ei[gid];
     const int v = ej[gid];
     atomic_fetch_add_explicit(&S[u], inv_sqrt, memory_order_relaxed);
@@ -117,7 +118,7 @@ kernel void k_accumulate_S_cas(
     if (gid >= n_edges) {
         return;
     }
-    const float inv_sqrt = rsqrt(we[gid]);
+    const float inv_sqrt = 1.0f / sqrt(we[gid]);
     const int u = ei[gid];
     const int v = ej[gid];
     atomic_add_float_cas(&S[u], inv_sqrt);

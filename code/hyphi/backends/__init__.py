@@ -30,6 +30,8 @@ import os
 import warnings
 from typing import TYPE_CHECKING
 
+import networkx as nx
+
 from .base import CurvatureBackend
 from .capabilities import Capabilities, detect, install_hint, recommend_backend
 from .cpu_numpy import NumpyBackend
@@ -40,7 +42,6 @@ from .native_ext import NativeExtBackend
 from .reference_networkx import NetworkxBackend
 
 if TYPE_CHECKING:
-    import networkx as nx
     import numpy as np
 
 __all__ = [
@@ -128,17 +129,17 @@ def _forman_one(
     fallback: CurvatureBackend,
     weight: str,
     warn_fallback: bool,
-) -> np.ndarray:
+) -> tuple[GraphArrays, np.ndarray]:
     arrays = graph_to_arrays(graph, weight=weight)
     try:
-        return backend.forman_curvature(arrays, method=method)
+        return arrays, backend.forman_curvature(arrays, method=method)
     except NotImplementedError:
         if warn_fallback:
             warnings.warn(
                 f"Backend {backend.name!r} does not implement method={method!r}; falling back to {fallback.name!r}.",
                 stacklevel=3,
             )
-        return fallback.forman_curvature(arrays, method=method)
+        return arrays, fallback.forman_curvature(arrays, method=method)
 
 
 def forman_curvature(
@@ -183,19 +184,36 @@ def forman_curvature(
     implement ``"1d"`` only) transparently falls back to the NumPy backend, so
     callers never have to special-case device support.
 
+    Self-loops are excluded from the curvature computation: a self-loop is not a
+    1-simplex in the Forman sense and, for PLV/CCORR graphs, is a diagonal
+    artifact (self-correlation 1.0). With ``annotate=True`` the returned copy has
+    its self-loops removed and a ``"formanCurvature"`` attribute on every
+    remaining edge, with values mapped to edges through the SoA index rather than
+    relying on edge-iteration order. This differs from
+    :func:`hyphi.modeling.graph_curvatures.compute_frc` on graphs that contain
+    self-loops, which annotates the self-loop edges too; see
+    ``docs/acceleration.md`` for the measured divergence on the shipped connectome.
+
     """
     resolved = get_backend(backend)
     fallback = get_backend(DEFAULT_BACKEND)
-    is_series = isinstance(graph, (list, tuple))
-    graphs = list(graph) if is_series else [graph]
+    # A single graph is an nx.Graph; anything else (list, tuple, generator) is a
+    # series, which also materializes a generator exactly once.
+    if isinstance(graph, nx.Graph):
+        graphs, is_series = [graph], False
+    else:
+        graphs, is_series = list(graph), True
 
     results = []
     for g in graphs:
-        curv = _forman_one(g, method, resolved, fallback, weight, warn_fallback)
+        arrays, curv = _forman_one(g, method, resolved, fallback, weight, warn_fallback)
         if annotate:
             gc = g.copy()
-            for (u, v), c in zip(gc.edges(), curv.tolist(), strict=True):
-                gc[u][v]["formanCurvature"] = c
+            gc.remove_edges_from([(u, v) for u, v in gc.edges() if u == v])
+            labels = arrays.node_order
+            ei, ej, cl = arrays.ei.tolist(), arrays.ej.tolist(), curv.tolist()
+            for k in range(arrays.n_edges):
+                gc[labels[ei[k]]][labels[ej[k]]]["formanCurvature"] = cl[k]
             results.append(gc)
         else:
             results.append(curv)

@@ -109,6 +109,33 @@ The NumPy backend is the reference to floating-point round-off; the Metal backen
 agrees to float32 (relative error of order 1e-6, with absolute error scaling with
 curvature magnitude). Pearson r is 1.000000 throughout.
 
+### 4.1 Self-loops: a deliberate divergence from the legacy path
+
+The parity tables above use Watts-Strogatz graphs, which have no self-loops. The
+shipped Kuramoto connectome graphs, however, carry one self-loop per node (the PLV
+diagonal is 1.0, a self-correlation artifact). The backends exclude self-loops by
+construction: a self-loop is not a 1-simplex in the Forman sense, and a PLV
+self-loop is not an inter-node edge. The legacy `compute_frc`, by contrast,
+iterates self-loop edges too. So on a self-loop graph the two paths differ, and
+the difference is the self-loop policy, not a kernel error.
+
+Measured on a shipped connectome window (152 nodes):
+
+| Quantity | legacy compute_frc | hyphi.backends | note |
+|---|---|---|---|
+| edges with a curvature value | 11628 | 11476 | 152 self-loops excluded |
+| mean abs FRC | 375.12 | 371.84 | self-loop term removed from S(u) and the 152 self-loop values |
+| backend vs legacy on the self-loop-removed graph | - | - | max abs 1.1e-12 (the kernel is exact once the graphs match) |
+
+The backends are the more defensible choice scientifically (self-loops distort the
+curvature spectrum and the downstream entropy), but because this changes published
+numbers on self-loop data it is called out here and is a question worth a decision:
+should the pipeline remove PLV self-loops everywhere (consistent with this layer)
+or keep the legacy behavior? `forman_curvature(..., annotate=True)` returns a copy
+with self-loops removed and a curvature on every remaining edge; the per-edge array
+is aligned to edges through the SoA index, not edge-iteration order, so relabeled
+or string-labeled nodes map correctly.
+
 ## 5. Throughput (apples-to-apples)
 
 ### 5.1 Single graph, median wall time
